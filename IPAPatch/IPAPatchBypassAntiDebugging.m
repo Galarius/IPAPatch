@@ -36,7 +36,7 @@ void * hooked_dlsym(void * __handle, const char * __symbol)
     return original_dlsym(__handle, __symbol);
 }
 
-static void disable_pt_deny_attach()
+static void disable_pt_deny_attach(void)
 {
     original_dlsym = dlsym(RTLD_DEFAULT, "dlsym");
     rebind_symbols((struct rebinding[1]){{"dlsym", hooked_dlsym}}, 1);
@@ -78,7 +78,7 @@ int	hooked_sysctl(int * arg0, u_int arg1, void * arg2, size_t * arg3, void * arg
     }
 }
 
-static void disable_sysctl_debugger_checking()
+static void disable_sysctl_debugger_checking(void)
 {
     original_sysctl = dlsym(RTLD_DEFAULT, "sysctl");
     rebind_symbols((struct rebinding[1]){{"sysctl", hooked_sysctl}}, 1);

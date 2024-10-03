@@ -25,6 +25,8 @@
 #
 #  Created by wutian on 2017/3/17.
 
+set -x
+
 PLATFORM="$1"
 
 TEMP_PATH="${SRCROOT}/Temp"
@@ -93,18 +95,18 @@ if [ "$RESTORE_SYMBOLS" = true ]; then
     # ---------------------------------------------------
     # 2.1 try to thin Mach-O File
 
-    MACH_O_FILE_NAME=`basename $TEMP_APP_PATH .app`
-    MACH_O_FILE_PATH=$TEMP_APP_PATH/$MACH_O_FILE_NAME
+    MACH_O_FILE_NAME=`basename "$TEMP_APP_PATH" .app`
+    MACH_O_FILE_PATH="$TEMP_APP_PATH/$MACH_O_FILE_NAME"
     echo "MACH_O_FILE_PATH: $MACH_O_FILE_PATH"
 
-    ARCHS=`lipo -archs $MACH_O_FILE_PATH`
+    ARCHS=`lipo -archs "$MACH_O_FILE_PATH"`
     ARCH_COUNT=${#ARCHS[@]}
     
     if [ $ARCH_COUNT -eq 1 ]; then
         echo "skipping lipo -thin: non-fat binary"
     else
-        lipo -thin armv7 $MACH_O_FILE_PATH -o $TEMP_PATH/"$MACH_O_FILE_NAME"_armv7
-        lipo -thin arm64 $MACH_O_FILE_PATH -o $TEMP_PATH/"$MACH_O_FILE_NAME"_arm64
+        lipo -thin armv7 "$MACH_O_FILE_PATH" -o $TEMP_PATH/"$MACH_O_FILE_NAME"_armv7
+        lipo -thin arm64 "$MACH_O_FILE_PATH" -o $TEMP_PATH/"$MACH_O_FILE_NAME"_arm64
     fi
 
     # ---------------------------------------------------
@@ -116,7 +118,7 @@ if [ "$RESTORE_SYMBOLS" = true ]; then
     RESTORE_SYMBOL_TOOL="${SRCROOT}/Tools/restore-symbol"
     
     if [ $ARCH_COUNT -eq 1 ]; then
-        "$RESTORE_SYMBOL_TOOL" $MACH_O_FILE_PATH -o $TEMP_PATH/$"$MACH_O_FILE_NAME"_with_symbol
+        "$RESTORE_SYMBOL_TOOL" "$MACH_O_FILE_PATH" -o "$TEMP_PATH"/$"$MACH_O_FILE_NAME"_with_symbol
     else
         "$RESTORE_SYMBOL_TOOL" $TEMP_PATH/$"$MACH_O_FILE_NAME"_armv7 -o $TEMP_PATH/$"$MACH_O_FILE_NAME"_armv7_with_symbol
         "$RESTORE_SYMBOL_TOOL" $TEMP_PATH/$"$MACH_O_FILE_NAME"_arm64 -o $TEMP_PATH/$"$MACH_O_FILE_NAME"_arm64_with_symbol
@@ -128,11 +130,11 @@ if [ "$RESTORE_SYMBOLS" = true ]; then
     if [ $ARCH_COUNT -eq 1 ]; then
         echo "skipping lipo -create: non-fat binary"
     else
-        lipo -create $TEMP_PATH/"$MACH_O_FILE_NAME"_armv7_with_symbol $TEMP_PATH/"$MACH_O_FILE_NAME"_arm64_with_symbol -o $TEMP_PATH/"$MACH_O_FILE_NAME"_with_symbol
+        lipo -create "$TEMP_PATH"/"$MACH_O_FILE_NAME"_armv7_with_symbol $TEMP_PATH/"$MACH_O_FILE_NAME"_arm64_with_symbol -o "$TEMP_PATH"/"$MACH_O_FILE_NAME"_with_symbol
     fi
 
-    rm -f $MACH_O_FILE_PATH
-    cp $TEMP_PATH/"$MACH_O_FILE_NAME"_with_symbol $MACH_O_FILE_PATH
+    rm -f "$MACH_O_FILE_PATH"
+    cp "$TEMP_PATH"/"$MACH_O_FILE_NAME"_with_symbol "$MACH_O_FILE_PATH"
 
 fi # [ "$RESTORE_SYMBOLS" ]
 
@@ -149,6 +151,9 @@ else
 fi
 echo "TARGET_APP_PATH: $TARGET_APP_PATH"
 
+# Preserve embedded.mobileprovision
+cp "$TARGET_APP_PATH"/embedded.mobileprovision "$TEMP_APP_PATH/"
+
 rm -rf "$TARGET_APP_PATH" || true
 mkdir -p "$TARGET_APP_PATH" || true
 cp -rfP "$TEMP_APP_PATH/" "$TARGET_APP_PATH/"
@@ -160,6 +165,7 @@ cp -rfP "$TEMP_APP_PATH/" "$TARGET_APP_PATH/"
 # 4. Inject the Executable We Wrote and Built (IPAPatchFramework.framework)
 
 APP_BINARY=`plutil -convert xml1 -o - $TARGET_APP_CONTENTS_PATH/Info.plist|grep -A1 Exec|tail -n1|cut -f2 -d\>|cut -f1 -d\<`
+echo "APP_BINARY: ${APP_BINARY}"
 if [ $PLATFORM = "Mac" ]
 then
     APP_BINARY="MacOS/$APP_BINARY"
@@ -294,6 +300,9 @@ TARGET_DISPLAY_NAME="$DUMMY_DISPLAY_NAME$TARGET_DISPLAY_NAME"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $PRODUCT_BUNDLE_IDENTIFIER" "$TARGET_APP_CONTENTS_PATH/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $TARGET_DISPLAY_NAME" "$TARGET_APP_CONTENTS_PATH/Info.plist"
 
+# Enable iTunes File Sharing
+/usr/libexec/PlistBuddy -c "Add :UIFileSharingEnabled bool YES" "$TARGET_APP_CONTENTS_PATH/Info.plist"
+
 if [ "$IGNORE_UI_SUPPORTED_DEVICES" = true ]; then
     /usr/libexec/PlistBuddy -c "Delete :UISupportedDevices" "$TARGET_APP_CONTENTS_PATH/Info.plist"
 fi
@@ -304,11 +313,17 @@ fi
 if [ "$USE_ORIGINAL_ENTITLEMENTS" = true ]; then
 ENTITLEMENTS="$TEMP_PATH/entitlements.xcent"
 codesign -d --entitlements :- "$TARGET_APP_PATH" > "$ENTITLEMENTS"
+else
+if [ $PLATFORM = "Mac" ]; then
+    echo "not implemented"
+else
+    ENTITLEMENTS="${SRCROOT}/IPAPatch-DummyApp/IPAPatch-DummyApp.entitlements"
+fi
 fi
 
 echo "Code Signing Dylibs"
 if [ "$USE_ORIGINAL_ENTITLEMENTS" = true ]; then
-    /usr/bin/codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" --entitlements "$ENTITLEMENTS" "$TARGET_APP_CONTENTS_PATH/Dylibs/"*
+    /usr/bin/codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" --timestamp "$TARGET_APP_CONTENTS_PATH/Dylibs/"*
 else
     /usr/bin/codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" "$TARGET_APP_CONTENTS_PATH/Dylibs/"*
 fi
@@ -316,31 +331,20 @@ fi
 
 echo "Code Signing Frameworks"
 if [ -d "$TARGET_APP_FRAMEWORKS_PATH" ]; then
-    if [ "$USE_ORIGINAL_ENTITLEMENTS" = true ]; then
-        echo "/usr/bin/codesign --force --sign $EXPANDED_CODE_SIGN_IDENTITY --entitlements $ENTITLEMENTS $TARGET_APP_FRAMEWORKS_PATH/*"
-        /usr/bin/codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" --entitlements "$ENTITLEMENTS" "$TARGET_APP_FRAMEWORKS_PATH/"*
-    else
-        echo "/usr/bin/codesign --force --sign $EXPANDED_CODE_SIGN_IDENTITY $TARGET_APP_FRAMEWORKS_PATH/*"
-        /usr/bin/codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" "$TARGET_APP_FRAMEWORKS_PATH/"*
-    fi
+    echo "/usr/bin/codesign --force --sign $EXPANDED_CODE_SIGN_IDENTITY --timestamp --entitlements $ENTITLEMENTS $TARGET_APP_FRAMEWORKS_PATH/*"
+    /usr/bin/codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" --timestamp --entitlements "$ENTITLEMENTS" "$TARGET_APP_FRAMEWORKS_PATH/"*
 fi
 
 echo "Code Signing App Binary"
-if [ "$USE_ORIGINAL_ENTITLEMENTS" = true ]; then
-    /usr/bin/codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" --timestamp=none --entitlements "$ENTITLEMENTS" "$TARGET_APP_PATH"
-    if [ $PLATFORM = "Mac" ]
-    then
-        /usr/bin/codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" --timestamp=none --entitlements "$ENTITLEMENTS" "$TARGET_APP_CONTENTS_PATH/MacOS/"*
-    fi
-else
-    /usr/bin/codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" --timestamp=none "$TARGET_APP_PATH"
-    if [ $PLATFORM = "Mac" ]
-    then
-        /usr/bin/codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" --timestamp=none "$TARGET_APP_CONTENTS_PATH/MacOS/"*
-    fi
+/usr/bin/codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" --timestamp --entitlements "$ENTITLEMENTS" "$TARGET_APP_PATH"
+if [ $PLATFORM = "Mac" ]
+then
+    /usr/bin/codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" --timestamp --entitlements "$ENTITLEMENTS" "$TARGET_APP_CONTENTS_PATH/MacOS/"*
 fi
 
-
+echo "Verify Signing"
+codesign -vvvv -d --entitlements - "$TARGET_APP_PATH"
+security cms -D -i "$TARGET_APP_PATH"/embedded.mobileprovision
 
 
 
