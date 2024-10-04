@@ -20,6 +20,8 @@
         // Return the original bundleID instead of the real one,
         // otherwise the server doesn't respond.
         [SwizzlingHelper swizzleGetApplicationBundleId];
+        // Return nil Facebook instance (also removed all FB settings from Info.plist)
+        [SwizzlingHelper swizzleFacebookInstance];
     }
 }
 
